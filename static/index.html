@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f9f6">
+  <title>MySEKAI Maps · 我的资源地图</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" type="module"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="MySEKAI Maps 首页"><span class="brand-mark">✦</span><span>MySEKAI <b>Maps</b></span></a>
+  </header>
+  <main>
+    <section class="intro">
+      <div><h1>资源地图</h1></div>
+    </section>
+    <section class="access-panel" aria-label="UID 和密码">
+      <form id="access-form" novalidate>
+        <div class="access-row">
+          <div class="credential-field uid-field"><label for="uid">游戏 UID <span class="required-label">必填</span></label><input id="uid" type="text" inputmode="numeric" placeholder="游戏 UID" maxlength="25" autocomplete="off" spellcheck="false" aria-describedby="key-error" required></div>
+          <div class="credential-field password-field"><label for="password">密码 <span class="required-label">6 位数字</span></label><div class="key-wrap"><input id="password" type="password" inputmode="numeric" placeholder="6 位数字" maxlength="6" autocomplete="off" aria-describedby="key-error" required><button type="button" id="key-toggle" aria-label="显示密码">显示</button></div></div>
+          <div class="access-actions"><button class="button primary" id="query-button" type="submit">查看地图</button><button class="button secondary" id="upload-open" type="button">上传数据</button><button class="button secondary" id="sync-open" type="button">自动同步</button></div>
+        </div>
+        <p id="key-error" class="key-error" role="alert" hidden></p>
+      </form>
+    </section>
+    <div id="notice" role="status" aria-live="polite" hidden></div>
+    <section class="workspace" aria-labelledby="maps-title">
+      <div class="section-heading"><div><h2 id="maps-title">我的地图</h2></div><div class="map-actions"><button class="button subtle" id="refresh-button" disabled>刷新地图</button></div></div>
+      <div class="snapshot-bar" id="snapshot-bar" hidden><span id="snapshot-account"></span><span id="snapshot-time"></span><span class="diamond-total" id="diamond-total"></span></div>
+      <div class="map-tabs" role="tablist" aria-label="选择地图">
+        <button role="tab" aria-selected="true" aria-controls="map-panel" id="tab-5" data-site="5"><span>01</span> 初始空地 <i></i></button>
+        <button role="tab" aria-selected="false" aria-controls="map-panel" id="tab-6" tabindex="-1" data-site="6"><span>02</span> 心愿沙滩 <i></i></button>
+        <button role="tab" aria-selected="false" aria-controls="map-panel" id="tab-7" tabindex="-1" data-site="7"><span>03</span> 烂漫花田 <i></i></button>
+        <button role="tab" aria-selected="false" aria-controls="map-panel" id="tab-8" tabindex="-1" data-site="8"><span>04</span> 忘却之所 <i></i></button>
+      </div>
+      <div class="map-panel" id="map-panel" role="tabpanel" aria-labelledby="tab-5">
+        <div class="empty-state" id="empty-state"><h3 id="empty-title">尚无地图</h3><p id="empty-description">输入 UID 和密码查询，或上传数据。</p></div>
+        <div class="map-result" id="map-result" hidden><div class="image-wrap"><img id="map-image" alt=""><button id="expand-map" class="image-expand" aria-label="放大地图">⤢</button></div><div class="map-caption"><div><h3 id="map-name"></h3><p id="map-summary"></p></div><a class="button secondary" id="download-map" download>下载地图 <span aria-hidden="true">↓</span></a></div></div>
+      </div>
+    </section>
+
+  </main>
+
+  <dialog id="upload-dialog" aria-labelledby="upload-title"><form method="dialog" class="dialog-top"><span class="eyebrow">UPLOAD</span><button class="close-button" aria-label="关闭上传窗口">×</button></form><h2 id="upload-title">上传数据</h2><p>支持原始响应（.bin）和已解密的 JSON。上传后替换当前 UID 和密码对应的数据。</p><form id="upload-form"><label for="upload-file" class="file-drop"><span aria-hidden="true">↑</span><strong>选择数据文件</strong><small id="file-name">.bin 或 .json · 最大 100 MB</small><input id="upload-file" type="file" accept=".bin,.json,application/octet-stream,application/json" required></label><label for="region">游戏区服</label><select id="region"><option value="cn">国服</option><option value="jp">日服</option><option value="tw">台服</option><option value="en">国际服</option><option value="kr">韩服</option></select><p class="field-help">使用上方填写的 UID 和密码。</p><p id="upload-error" class="dialog-error" role="alert"></p><button class="button primary full" id="upload-button" type="submit">上传并生成地图</button></form></dialog>
+  <dialog id="sync-dialog" aria-labelledby="sync-title"><form method="dialog" class="dialog-top"><span class="eyebrow">AUTO SYNC</span><button class="close-button" aria-label="关闭同步窗口">×</button></form><h2 id="sync-title">自动同步</h2><p>仅支持国服。</p><ol class="sync-steps"><li>在 Shadowrocket 中导入下载的模块。</li><li>安装并信任 HTTPS 解密证书，启用模块。</li><li>进入 MySEKAI，收到成功通知后回到这里刷新。</li></ol><div class="sync-origin"><span>同步服务器</span><code id="sync-origin"></code></div><p id="sync-hint" class="field-help"></p><p class="field-help">配置包含上传凭据。上传失败时不会自动补传。</p><p id="sync-error" class="dialog-error" role="alert"></p><button id="download-module" class="button primary full">下载 Shadowrocket 配置 ↓</button></dialog>
+  <dialog id="image-dialog" class="image-dialog" aria-label="放大地图"><form method="dialog"><button class="close-button" aria-label="关闭大图">×</button></form><img id="large-image" alt="资源地图大图"></dialog>
+</body>
+</html>

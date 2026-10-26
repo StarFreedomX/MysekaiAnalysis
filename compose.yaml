@@ -1,0 +1,21 @@
+services:
+  web:
+    build: .
+    ports:
+      - "${BIND_IP:-127.0.0.1}:${PORT:-3939}:3939"
+    environment:
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://127.0.0.1:3939}
+      API_REGION: ${API_REGION:-cn}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-100000000}
+      MAP_IMAGE_WIDTH: ${MAP_IMAGE_WIDTH:-1024}
+      REQUESTS_PER_MINUTE: ${REQUESTS_PER_MINUTE:-120}
+    volumes:
+      - data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3939/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+volumes:
+  data:

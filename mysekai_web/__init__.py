@@ -1,0 +1,1 @@
+"""MySEKAI map viewer."""
