@@ -2,6 +2,7 @@ import hashlib
 import http.client
 import io
 import json
+import socket
 import sqlite3
 import tempfile
 import threading
@@ -169,6 +170,70 @@ class WebTests(unittest.TestCase):
         store.save(hashlib.sha256(RAW_KEY.encode()).hexdigest(), UID, b"legacy", metadata, {5: b"legacy-png"})
         self.assertEqual(json.loads(self.request("/api/maps")[1])["data"]["uid"], UID)
         self.assertEqual(self.request("/api/maps/5/image")[1], b"legacy-png")
+
+    def test_invalid_binary_is_archived_exactly_with_reason(self):
+        body = b"\x00\xffinvalid-encrypted-body\x80"
+        with self.assertLogs("mysekai", level="WARNING") as logs:
+            status, response, _ = self.request("/api/upload", "POST", body)
+        result = json.loads(response)
+        self.assertEqual(status, 422)
+        archive_id = result["archive_id"]
+        directory = self.settings.db_path.parent / "failed_uploads"
+        self.assertEqual((directory / f"{archive_id}.bin").read_bytes(), body)
+        metadata = json.loads((directory / f"{archive_id}.json").read_text())
+        self.assertEqual(metadata["message"], result["message"])
+        self.assertEqual(metadata["uid"], UID)
+        self.assertEqual(metadata["region"], "cn")
+        self.assertEqual(metadata["received_bytes"], len(body))
+        self.assertEqual(metadata["expected_bytes"], len(body))
+        self.assertEqual(metadata["sha256"], hashlib.sha256(body).hexdigest())
+        self.assertIn("InvalidUpload", metadata["exception_types"])
+        self.assertNotIn(KEY, json.dumps(metadata))
+        self.assertNotIn(KEY, "\n".join(logs.output))
+        self.assertIn(archive_id, "\n".join(logs.output))
+        self.assertEqual(self.request("/api/maps")[0], 404)
+
+    def test_failed_database_write_still_archives_and_preserves_last_map(self):
+        self.assertEqual(self.upload(packet((5,)))[0], 200)
+        original_image = self.request("/api/maps/5/image")[1]
+        with patch.object(self.server.store, "save", side_effect=sqlite3.OperationalError("database unavailable")):
+            status, response, _ = self.upload(packet((6,)))
+        self.assertEqual(status, 500)
+        archive_id = json.loads(response)["archive_id"]
+        binary = self.settings.db_path.parent / "failed_uploads" / f"{archive_id}.bin"
+        self.assertEqual(json.loads(binary.read_bytes()), packet((6,)))
+        self.assertEqual(self.request("/api/maps/5/image")[1], original_image)
+
+    def test_archive_failure_is_reported_without_hiding_upload_error(self):
+        with patch.object(self.server.store, "archive_failure", side_effect=OSError("disk full")):
+            with self.assertLogs("mysekai", level="ERROR") as logs:
+                status, response, _ = self.request("/api/upload", "POST", b"bad data")
+        self.assertEqual(status, 422)
+        self.assertNotIn("archive_id", json.loads(response))
+        self.assertIn("Failed to archive", "\n".join(logs.output))
+
+    def test_incomplete_upload_archives_received_bytes(self):
+        body = b"partial upload"
+        connection = http.client.HTTPConnection(*self.server.server_address, timeout=10)
+        connection.putrequest("POST", "/api/upload")
+        connection.putheader("Authorization", "Bearer " + KEY)
+        connection.putheader("X-User-Id", UID)
+        connection.putheader("Content-Length", len(body) + 100)
+        connection.endheaders(body)
+        connection.sock.shutdown(socket.SHUT_WR)
+        response = connection.getresponse()
+        result = json.loads(response.read())
+        self.assertEqual(response.status, 400)
+        connection.close()
+        directory = self.settings.db_path.parent / "failed_uploads"
+        self.assertEqual((directory / (result["archive_id"] + ".bin")).read_bytes(), body)
+        metadata = json.loads((directory / (result["archive_id"] + ".json")).read_text())
+        self.assertEqual(metadata["expected_bytes"], len(body) + 100)
+
+    def test_success_and_unauthenticated_requests_do_not_create_failure_archives(self):
+        self.assertEqual(self.upload(packet((5,)))[0], 200)
+        self.assertEqual(self.request("/api/upload", "POST", b"bad", key=None)[0], 401)
+        self.assertFalse((self.settings.db_path.parent / "failed_uploads").exists())
 
     def test_rate_limit(self):
         self.server.limiter.limit = 2

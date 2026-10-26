@@ -130,6 +130,22 @@ class Handler(BaseHTTPRequestHandler):
     def error(self, status, code, message):
         self.send(status, {"ok": False, "error": code, "message": message})
 
+    def upload_failure(self, status, code, message, uid, region, body, expected_bytes, exc=None):
+        archive_id = None
+        if body:
+            try:
+                archive_id = self.server.store.archive_failure(
+                    uid, region, body, status, code, message, expected_bytes, exc)
+            except Exception as archive_exc:
+                LOGGER.error("Failed to archive upload uid=%s bytes=%s error_type=%s",
+                             uid, len(body), type(archive_exc).__name__)
+        LOGGER.warning("Upload rejected uid=%s region=%s status=%s code=%s bytes=%s archive=%s reason=%s",
+                       uid, region, status, code, len(body), archive_id or "unavailable", message)
+        response = {"ok": False, "error": code, "message": message}
+        if archive_id:
+            response["archive_id"] = archive_id
+        self.send(status, response)
+
     def credentials(self):
         if not self.server.limiter.allow(self.client_address[0]):
             self.error(429, "rate_limited", "请求太频繁，请一分钟后再试。")
@@ -220,22 +236,29 @@ class Handler(BaseHTTPRequestHandler):
         if not self.server.upload_slots.acquire(blocking=False):
             self.error(503, "busy", "正在处理其他地图，请稍后重试。")
             return
+        body = bytearray()
         try:
-            body = self.rfile.read(length)
+            while len(body) < length:
+                chunk = self.rfile.read1(min(65536, length - len(body)))
+                if not chunk:
+                    break
+                body.extend(chunk)
             if len(body) != length:
-                self.error(400, "incomplete_body", "上传中断，文件内容不完整。")
+                self.upload_failure(400, "incomplete_body", "上传中断，文件内容不完整。",
+                                    uid, region, body, length)
                 return
             metadata, images = process(body, uid, region, self.headers.get("X-Original-Url", ""),
                                        ROOT / "assets", self.server.settings.image_width)
             self.server.store.save(key_hash, uid, body, metadata, images)
             self.send(200, {"ok": True, "data": metadata})
         except InvalidUpload as exc:
-            self.error(422, "invalid_upload", str(exc))
-        except (socket.timeout, TimeoutError):
-            self.error(408, "upload_timeout", "上传超时，请重试。")
+            self.upload_failure(422, "invalid_upload", str(exc), uid, region, body, length, exc)
+        except (socket.timeout, TimeoutError) as exc:
+            self.upload_failure(408, "upload_timeout", "上传超时，请重试。",
+                                uid, region, body, length, exc)
         except Exception as exc:
-            LOGGER.error("Upload processing failed (%s)", type(exc).__name__)
-            self.error(500, "processing_failed", "地图处理失败，原有数据已保留，请查看服务日志。")
+            self.upload_failure(500, "processing_failed", "地图处理失败，原有数据已保留，请查看服务日志。",
+                                uid, region, body, length, exc)
         finally:
             self.server.upload_slots.release()
 

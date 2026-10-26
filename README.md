@@ -38,6 +38,26 @@ SQLite 直接使用这个哈希作为数据索引，保存 UID、上传时间、
 
 手动上传可以使用 `.bin` 原始响应或已解密 JSON。普通代理日志、截图和只含请求头的文件不能生成地图。响应应包含 `updatedResources.userMysekaiHarvestMaps`；服务显示本次响应中包含的地图，不与旧响应合并。对于原始响应，按游戏区服解密。地图归属记录或抓包 URL 中的 UID 必须与 X-User-Id 一致。
 
+## 失败上传记录
+
+已经收到的非空上传内容如果解密、校验、渲染或入库失败，会保存到数据库同级的 `failed_uploads/` 目录。Docker 中是 `/data/failed_uploads/`，使用现有数据卷持久保存。
+
+每次失败生成同名文件：
+
+- `.bin`：收到的原始字节，不做编码转换。
+- `.json`：UID、UTC 时间、区服、错误原因、异常类型、实际和预期字节数、文件 SHA-256。
+
+错误响应增加 `archive_id`，容器日志也会记录该编号和具体失败原因。归档不记录 Authorization 或哈希凭据。数据库写入失败时，仍会尝试独立保存文件；归档写入失败会明确记录错误，不返回虚假的归档编号。
+
+连接中断时保留已经读到的内容。鉴权失败、超过大小限制等尚未接收请求体的情况不保存 bin。成功请求仍按原方式保存到 SQLite，不额外生成失败文件。
+
+```bash
+docker compose -p mysekai-web exec web ls -lh /data/failed_uploads
+docker compose -p mysekai-web logs --tail 100 web
+```
+
+失败文件不会自动清理，也不会通过网页提供下载。升级前未保存的失败请求无法补回，需要重新上传。
+
 ## HTTP 接口
 
 | 方法与路径 | 功能 | 鉴权 |

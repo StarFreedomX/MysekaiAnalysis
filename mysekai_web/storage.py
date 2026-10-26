@@ -1,9 +1,12 @@
 """One latest snapshot per hashed access key, committed atomically."""
 
 import json
+import hashlib
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 
 class Store:
@@ -59,3 +62,30 @@ class Store:
         with self.connect() as db:
             row = db.execute("SELECT image FROM maps WHERE key_hash=? AND site_id=?", (key_hash, site_id)).fetchone()
         return row[0] if row else None
+
+    def archive_failure(self, uid, region, payload, status, code, message, expected_bytes, exc=None):
+        """Keep failed bytes independently of SQLite, including database failures."""
+        now = datetime.now(timezone.utc)
+        archive_id = f"{now.strftime('%Y%m%dT%H%M%S%fZ')}_{uid}_{uuid4().hex[:8]}"
+        directory = self.path.parent / "failed_uploads"
+        directory.mkdir(parents=True, exist_ok=True)
+        binary_path = directory / f"{archive_id}.bin"
+        with binary_path.open("xb") as stream:
+            stream.write(payload)
+        chain = []
+        seen = set()
+        while exc is not None and id(exc) not in seen:
+            seen.add(id(exc))
+            chain.append(type(exc).__name__)
+            exc = exc.__cause__ or exc.__context__
+        metadata = {
+            "id": archive_id, "uid": uid, "received_at": now.isoformat(), "region": region,
+            "status": status, "error": code, "message": message,
+            "received_bytes": len(payload), "expected_bytes": expected_bytes,
+            "sha256": hashlib.sha256(payload).hexdigest(), "exception_types": chain,
+        }
+        metadata_path = directory / f"{archive_id}.json"
+        temporary_path = directory / f"{archive_id}.json.tmp"
+        temporary_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary_path.replace(metadata_path)
+        return archive_id
